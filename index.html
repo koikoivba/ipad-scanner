@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>魔法の読み取りスキャナー</title>
+  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@4/dist/tesseract.min.js"></script>
+  <style>
+    /* 先生や子どもたちが安心できる、温かみのあるデザインです */
+    body {
+      font-family: 'Zen Maru Gothic', 'Hiragino Maru Gothic ProN', sans-serif;
+      background-color: #fdfbf7; /* 生成り色ベース */
+      color: #333;
+      text-align: center;
+      margin: 0;
+      padding: 10px;
+    }
+    h1 {
+      color: #008080;
+      font-size: 1.5rem;
+    }
+    #camera-container {
+      position: relative;
+      width: 100%;
+      max-width: 600px;
+      margin: 0 auto;
+      border: 2px solid #ffcc80;
+      border-radius: 10px;
+      overflow: hidden;
+    }
+    video, canvas {
+      display: block;
+      width: 100%;
+      /* iPadでタッチ操作しやすいように調整 */
+      touch-action: none; 
+    }
+    /* なぞるための透明なキャンバスをビデオの上に重ねます */
+    #overlay-canvas {
+      position: absolute;
+      top: 0;
+      left: 0;
+      z-index: 10;
+    }
+    .btn {
+      padding: 12px 24px;
+      margin: 15px 5px;
+      background: #008080;
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+      font-size: 1.1rem;
+      font-weight: bold;
+      cursor: pointer;
+      box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+    }
+    .btn:active { background: #006666; transform: translateY(2px); }
+    #result-box {
+      width: 90%;
+      max-width: 600px;
+      height: 100px;
+      margin: 10px auto;
+      padding: 10px;
+      border: 1px solid #ddd;
+      border-radius: 8px;
+      font-size: 1rem;
+    }
+    #status { color: #d32f2f; font-weight: bold; }
+  </style>
+</head>
+<body>
+
+  <h1>📷 魔法の読み取りスキャナー</h1>
+  <p>カメラを起動して、読み取りたい手書き文字を指で四角く囲んでね。</p>
+  
+  <button class="btn" onclick="startCamera()">カメラを起動</button>
+  <button class="btn" onclick="processOCR()">読み取ってコピー</button>
+  <p id="status"></p>
+
+  <div id="camera-container">
+    <video id="video" autoplay playsinline></video>
+    <canvas id="overlay-canvas"></canvas>
+  </div>
+
+  <textarea id="result-box" placeholder="ここに読み取った文字が入るよ..."></textarea>
+
+  <script>
+    const video = document.getElementById('video');
+    const canvas = document.getElementById('overlay-canvas');
+    const ctx = canvas.getContext('2d');
+    const statusText = document.getElementById('status');
+    const resultBox = document.getElementById('result-box');
+
+    let startX = 0, startY = 0, rectWidth = 0, rectHeight = 0;
+    let isDrawing = false;
+
+    // 1. カメラを呼び出す処理
+    async function startCamera() {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ 
+          video: { facingMode: 'environment' } // iPadの外側のカメラを使います
+        });
+        video.srcObject = stream;
+        
+        // ビデオのサイズに合わせてキャンバスのサイズも整えます
+        video.onloadedmetadata = () => {
+          canvas.width = video.clientWidth;
+          canvas.height = video.clientHeight;
+        };
+        statusText.innerText = "カメラの準備ができたよ！画面をなぞってね。";
+      } catch (err) {
+        statusText.innerText = "カメラにアクセスできませんでした。設定を確認してね。";
+        console.error(err);
+      }
+    }
+
+    // 2. 指でなぞって範囲を決める処理（タッチイベント）
+    function getTouchPos(e) {
+      const rect = canvas.getBoundingClientRect();
+      const touch = e.touches[0];
+      return {
+        x: touch.clientX - rect.left,
+        y: touch.clientY - rect.top
+      };
+    }
+
+    canvas.addEventListener('touchstart', (e) => {
+      e.preventDefault();
+      const pos = getTouchPos(e);
+      startX = pos.x;
+      startY = pos.y;
+      isDrawing = true;
+    });
+
+    canvas.addEventListener('touchmove', (e) => {
+      e.preventDefault();
+      if (!isDrawing) return;
+      const pos = getTouchPos(e);
+      rectWidth = pos.x - startX;
+      rectHeight = pos.y - startY;
+      
+      // 画面を一度消して、新しい四角を描き直します
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.strokeStyle = '#ff5252'; // 赤い枠線
+      ctx.lineWidth = 3;
+      ctx.strokeRect(startX, startY, rectWidth, rectHeight);
+      
+      // 枠の外側を少し暗くする演出
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.3)';
+      ctx.fillRect(0, 0, canvas.width, startY); // 上
+      ctx.fillRect(0, startY + rectHeight, canvas.width, canvas.height - (startY + rectHeight)); // 下
+      ctx.fillRect(0, startY, startX, rectHeight); // 左
+      ctx.fillRect(startX + rectWidth, startY, canvas.width - (startX + rectWidth), rectHeight); // 右
+    });
+
+    canvas.addEventListener('touchend', () => {
+      isDrawing = false;
+    });
+
+    // 3. 切り取って文字を読み取り、コピーする処理
+    async function processOCR() {
+      if (rectWidth === 0 || rectHeight === 0) {
+        statusText.innerText = "先に読み取りたい場所を指で囲んでね！";
+        return;
+      }
+
+      statusText.innerText = "AIが一生懸命読んでいます...（数秒待ってね）";
+
+      // 裏側でこっそり切り取り用のキャンバスを作ります
+      const cropCanvas = document.createElement('canvas');
+      cropCanvas.width = Math.abs(rectWidth);
+      cropCanvas.height = Math.abs(rectHeight);
+      const cropCtx = cropCanvas.getContext('2d');
+
+      // 実際のビデオの解像度と、画面上の表示サイズの比率を計算
+      const scaleX = video.videoWidth / canvas.width;
+      const scaleY = video.videoHeight / canvas.height;
+
+      // 指定された範囲の映像を切り取ります
+      const srcX = Math.min(startX, startX + rectWidth) * scaleX;
+      const srcY = Math.min(startY, startY + rectHeight) * scaleY;
+      const srcW = Math.abs(rectWidth) * scaleX;
+      const srcH = Math.abs(rectHeight) * scaleY;
+
+      cropCtx.drawImage(video, srcX, srcY, srcW, srcH, 0, 0, cropCanvas.width, cropCanvas.height);
+      const imageData = cropCanvas.toDataURL('image/png');
+
+      // Tesseract.js（魔法の杖）で画像から日本語を読み取ります
+      try {
+        const result = await Tesseract.recognize(imageData, 'jpn', {
+          logger: m => console.log(m) // 裏側で進捗を確認できます
+        });
+
+        const text = result.data.text.trim();
+        resultBox.value = text;
+
+        // クリップボードにコピー
+        await navigator.clipboard.writeText(text);
+        statusText.innerText = "読み取り成功！自動でコピーしたよ✨";
+        
+      } catch (err) {
+        statusText.innerText = "うまく読めなかったみたい。もう一度明るい場所で試してみてね。";
+        console.error(err);
+      }
+    }
+  </script>
+</body>
+</html>
