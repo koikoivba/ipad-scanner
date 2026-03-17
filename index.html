@@ -3,20 +3,20 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>魔法の読み取りスキャナー</title>
+  <title>魔法の読み取りスキャナー（高精度版）</title>
   <script src="https://cdn.jsdelivr.net/npm/tesseract.js@4/dist/tesseract.min.js"></script>
   <style>
     body { font-family: 'Zen Maru Gothic', sans-serif; background-color: #fdfbf7; color: #333; text-align: center; margin: 0; padding: 10px; }
     h1 { color: #008080; font-size: 1.5rem; margin-bottom: 5px; }
-    #camera-container { position: relative; width: 100%; max-width: 600px; margin: 0 auto; border: 2px solid #ffcc80; border-radius: 10px; overflow: hidden; }
+    #camera-container { position: relative; width: 100%; max-width: 600px; margin: 0 auto; border: 2px solid #ffcc80; border-radius: 10px; overflow: hidden; background: #000; }
     video, canvas { display: block; width: 100%; touch-action: none; }
     #overlay-canvas { position: absolute; top: 0; left: 0; z-index: 10; }
-    .btn { padding: 12px 20px; margin: 10px 5px; background: #008080; color: #fff; border: none; border-radius: 8px; font-size: 1rem; font-weight: bold; cursor: pointer; }
-    .btn-copy { background: #ff9800; /* コピーボタンは目立つオレンジ色に */ }
+    .btn { padding: 12px 20px; margin: 5px; background: #008080; color: #fff; border: none; border-radius: 8px; font-size: 1rem; font-weight: bold; cursor: pointer; }
+    .btn-copy { background: #ff9800; }
     #result-box { width: 90%; max-width: 600px; height: 100px; margin: 10px auto; padding: 10px; border: 1px solid #ddd; border-radius: 8px; font-size: 1.1rem; }
     #status { color: #d32f2f; font-weight: bold; margin: 10px 0; min-height: 24px;}
     #preview-container { margin-top: 15px; border-top: 2px dashed #ccc; padding-top: 10px; }
-    #preview-img { max-width: 100%; max-height: 150px; border: 1px solid #008080; }
+    #preview-img { max-width: 100%; max-height: 150px; border: 1px solid #008080; background: #eee; }
   </style>
 </head>
 <body>
@@ -24,11 +24,11 @@
   <h1>📷 魔法の読み取りスキャナー</h1>
   
   <div>
-    <button class="btn" onclick="startCamera()">① カメラを起動</button>
+    <button class="btn" onclick="startCamera()">① カメラ起動（高画質）</button>
     <button class="btn" onclick="processOCR()">② 読み取る</button>
   </div>
   
-  <p id="status">ここに現在の状況が出ます</p>
+  <p id="status">ここに状況が出ます</p>
 
   <div id="camera-container">
     <video id="video" autoplay playsinline></video>
@@ -36,11 +36,11 @@
   </div>
 
   <textarea id="result-box" placeholder="ここに読み取った文字が入るよ..."></textarea>
-  <button class="btn btn-copy" onclick="copyResultText()">③ テキストをコピーする</button>
+  <button class="btn btn-copy" onclick="copyResultText()">③ コピーする</button>
 
   <div id="preview-container">
-    <p style="font-size: 0.9rem; color: #666;">↓ AIが読んでいる画像（2倍に拡大済） ↓</p>
-    <img id="preview-img" alt="プレビュー画像がここに出ます" />
+    <p style="font-size: 0.9rem; color: #666;">↓ AIが読んでいる画像（大津の二値化済） ↓</p>
+    <img id="preview-img" alt="プレビュー画像" />
   </div>
 
   <script>
@@ -54,26 +54,35 @@
     let startX = 0, startY = 0, rectWidth = 0, rectHeight = 0;
     let isDrawing = false;
 
+    // 1. カメラの高画質化（ideal制約）
     async function startCamera() {
       try {
-        const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+        const constraints = {
+          video: {
+            facingMode: 'environment',
+            width: { ideal: 4096 }, // 4Kクラスを要求してエッジを鮮明に
+            height: { ideal: 2160 }
+          },
+          audio: false
+        };
+        const stream = await navigator.mediaDevices.getUserMedia(constraints);
         video.srcObject = stream;
         video.onloadedmetadata = () => {
           canvas.width = video.clientWidth;
           canvas.height = video.clientHeight;
         };
-        statusText.innerText = "カメラ準備OK！画面をなぞってね。";
+        statusText.innerText = "カメラ準備OK！高画質モードです。なぞってね。";
       } catch (err) {
         statusText.innerText = "カメラエラー: " + err.message;
+        console.error("Camera API Error:", err);
       }
     }
 
+    // タッチ操作（変更なし）
     function getTouchPos(e) {
-      const rect = canvas.getBoundingClientRect();
-      const touch = e.touches[0];
+      const rect = canvas.getBoundingClientRect(); const touch = e.touches[0];
       return { x: touch.clientX - rect.left, y: touch.clientY - rect.top };
     }
-
     canvas.addEventListener('touchstart', (e) => { e.preventDefault(); startX = getTouchPos(e).x; startY = getTouchPos(e).y; isDrawing = true; });
     canvas.addEventListener('touchmove', (e) => {
       e.preventDefault(); if (!isDrawing) return;
@@ -83,73 +92,124 @@
     });
     canvas.addEventListener('touchend', () => { isDrawing = false; });
 
-    async function processOCR() {
-      if (Math.abs(rectWidth) < 10 || Math.abs(rectHeight) < 10) {
-        statusText.innerText = "エラー: もう少し大きく四角を囲んでね！";
-        return;
+    // 2. 魔法の関数：大津の二値化（ノイズ除去と完全白黒化）
+    function applyOtsuBinarization(imageData) {
+      const data = imageData.data;
+      const length = data.length;
+      let grays = new Uint8Array(length / 4);
+
+      // グレースケール化
+      for (let i = 0; i < length; i += 4) {
+        const r = data[i], g = data[i + 1], b = data[i + 2];
+        grays[i / 4] = Math.round(r * 0.2126 + g * 0.7152 + b * 0.0722);
       }
 
-      statusText.innerText = "画像を切り取り中...";
+      // ヒストグラム作成
+      let histogram = new Array(256).fill(0);
+      for (let i = 0; i < grays.length; i++) histogram[grays[i]]++;
+
+      // 大津の二値化アルゴリズム
+      let total = grays.length, sum = 0, sumB = 0, wB = 0, wF = 0;
+      let varMax = 0, threshold = 0;
+      for (let i = 0; i < 256; i++) sum += i * histogram[i];
+
+      for (let i = 0; i < 256; i++) {
+        wB += histogram[i];
+        if (wB === 0) continue;
+        wF = total - wB;
+        if (wF === 0) break;
+        sumB += i * histogram[i];
+        let mB = sumB / wB;
+        let mF = (sum - sumB) / wF;
+        let varBetween = wB * wF * Math.pow(mB - mF, 2);
+        if (varBetween > varMax) {
+          varMax = varBetween;
+          threshold = i;
+        }
+      }
+
+      // 白黒化
+      for (let i = 0; i < length; i += 4) {
+        const color = grays[i / 4] < threshold ? 0 : 255;
+        data[i] = color; data[i + 1] = color; data[i + 2] = color; data[i + 3] = 255;
+      }
+      return imageData;
+    }
+
+    // 3. AIエンジンの最適化（WorkerとPSM）
+    async function processOCR() {
+      if (Math.abs(rectWidth) < 20 || Math.abs(rectHeight) < 20) {
+        return statusText.innerText = "エラー: もう少し大きく四角を囲んでね！";
+      }
+
+      statusText.innerText = "画像を最適化中...";
+      resultBox.value = "";
 
       const cropCanvas = document.createElement('canvas');
       const scaleX = video.videoWidth / canvas.width;
       const scaleY = video.videoHeight / canvas.height;
-
       const srcX = Math.min(startX, startX + rectWidth) * scaleX;
       const srcY = Math.min(startY, startY + rectHeight) * scaleY;
       const srcW = Math.abs(rectWidth) * scaleX;
       const srcH = Math.abs(rectHeight) * scaleY;
 
-      // 【精度向上の魔法】AIが見やすいように画像を2倍に拡大します
-      const MAGNIFY = 2; 
-      cropCanvas.width = srcW * MAGNIFY;
-      cropCanvas.height = srcH * MAGNIFY;
+      // ネイティブ高解像度をそのまま使うため、MAGNIFY（拡大）はしない
+      cropCanvas.width = srcW;
+      cropCanvas.height = srcH;
       const cropCtx = cropCanvas.getContext('2d');
-      // srcW, srcH の画像を、2倍の大きさのキャンバスに描画します
-      cropCtx.drawImage(video, srcX, srcY, srcW, srcH, 0, 0, srcW * MAGNIFY, srcH * MAGNIFY);
+      cropCtx.drawImage(video, srcX, srcY, srcW, srcH, 0, 0, srcW, srcH);
 
-      const imageData = cropCanvas.toDataURL('image/png');
-      previewImg.src = imageData;
+      // 二値化の魔法をかける
+      let imageDataObj = cropCtx.getImageData(0, 0, srcW, srcH);
+      imageDataObj = applyOtsuBinarization(imageDataObj);
+      cropCtx.putImageData(imageDataObj, 0, 0);
 
+      const finalImageData = cropCanvas.toDataURL('image/png');
+      previewImg.src = finalImageData;
+
+      let worker = null;
       try {
-        // 【精度向上の魔法】日本語だけでなく英語・数字も読めるように 'jpn+eng' に変更します
-        const result = await Tesseract.recognize(imageData, 'jpn+eng', {
+        statusText.innerText = "高精度AIを起動中...";
+        // Workerの生成
+        worker = await Tesseract.createWorker('jpn+eng', 1, {
           logger: m => {
             if (m.status === 'recognizing text') {
               statusText.innerText = `文字を解読中... ${Math.round(m.progress * 100)}%`;
-            } else {
-              statusText.innerText = `AIの準備中... (${m.status} ${Math.round(m.progress * 100)}%)`;
             }
           }
         });
 
-        const text = result.data.text.trim();
+        // 魔法の設定: PSMを 6 (Single uniform block of text) に設定
+        await worker.setParameters({
+          tessedit_pageseg_mode: Tesseract.PSM.SINGLE_BLOCK,
+        });
+
+        const result = await worker.recognize(finalImageData);
+        
+        // 正規表現で不自然なスペースを削除（掃除）
+        const text = result.data.text.replace(/\s+/g, '').trim();
         resultBox.value = text;
         
-        if (text === "") {
-            statusText.innerText = "読み取り完了！でも文字が見つかりませんでした。";
-        } else {
-            statusText.innerText = "読み取り成功！下のボタンを押してコピーしてね✨";
-        }
+        statusText.innerText = text ? "読み取り大成功！コピーしてね✨" : "文字が見つかりませんでした。";
+
       } catch (err) {
-        statusText.innerText = "エラー詳細: " + (err.message || "原因不明のエラー");
+        statusText.innerText = "エラー: " + err.message;
         console.error(err);
+      } finally {
+        // メモリ管理：終わったら必ずワーカーを解放する
+        if (worker) {
+          await worker.terminate();
+        }
       }
     }
 
-    // 【iPad対策】コピー専用のボタンと機能を追加
     async function copyResultText() {
       const text = resultBox.value;
-      if (!text) {
-        statusText.innerText = "コピーする文字がありません！";
-        return;
-      }
+      if (!text) return statusText.innerText = "コピーする文字がありません！";
       try {
         await navigator.clipboard.writeText(text);
-        statusText.innerText = "✅ コピーしました！別のアプリに貼り付けてね。";
-      } catch (err) {
-        statusText.innerText = "コピーに失敗しました。手動で選択してコピーしてね。";
-      }
+        statusText.innerText = "✅ コピー大成功！";
+      } catch (err) { statusText.innerText = "コピー失敗。手動でコピーしてね。"; }
     }
   </script>
 </body>
