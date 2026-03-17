@@ -7,15 +7,14 @@
   <script src="https://cdn.jsdelivr.net/npm/tesseract.js@4/dist/tesseract.min.js"></script>
   <style>
     body { font-family: 'Zen Maru Gothic', sans-serif; background-color: #fdfbf7; color: #333; text-align: center; margin: 0; padding: 10px; }
-    h1 { color: #008080; font-size: 1.5rem; }
+    h1 { color: #008080; font-size: 1.5rem; margin-bottom: 5px; }
     #camera-container { position: relative; width: 100%; max-width: 600px; margin: 0 auto; border: 2px solid #ffcc80; border-radius: 10px; overflow: hidden; }
     video, canvas { display: block; width: 100%; touch-action: none; }
     #overlay-canvas { position: absolute; top: 0; left: 0; z-index: 10; }
-    .btn { padding: 12px 24px; margin: 15px 5px; background: #008080; color: #fff; border: none; border-radius: 8px; font-size: 1.1rem; font-weight: bold; cursor: pointer; }
-    #result-box { width: 90%; max-width: 600px; height: 100px; margin: 10px auto; padding: 10px; border: 1px solid #ddd; border-radius: 8px; font-size: 1rem; }
+    .btn { padding: 12px 20px; margin: 10px 5px; background: #008080; color: #fff; border: none; border-radius: 8px; font-size: 1rem; font-weight: bold; cursor: pointer; }
+    .btn-copy { background: #ff9800; /* コピーボタンは目立つオレンジ色に */ }
+    #result-box { width: 90%; max-width: 600px; height: 100px; margin: 10px auto; padding: 10px; border: 1px solid #ddd; border-radius: 8px; font-size: 1.1rem; }
     #status { color: #d32f2f; font-weight: bold; margin: 10px 0; min-height: 24px;}
-    
-    /* 今回追加：AIが見ている画像をプレビューするエリア */
     #preview-container { margin-top: 15px; border-top: 2px dashed #ccc; padding-top: 10px; }
     #preview-img { max-width: 100%; max-height: 150px; border: 1px solid #008080; }
   </style>
@@ -23,8 +22,11 @@
 <body>
 
   <h1>📷 魔法の読み取りスキャナー</h1>
-  <button class="btn" onclick="startCamera()">カメラを起動</button>
-  <button class="btn" onclick="processOCR()">読み取ってコピー</button>
+  
+  <div>
+    <button class="btn" onclick="startCamera()">① カメラを起動</button>
+    <button class="btn" onclick="processOCR()">② 読み取る</button>
+  </div>
   
   <p id="status">ここに現在の状況が出ます</p>
 
@@ -34,9 +36,10 @@
   </div>
 
   <textarea id="result-box" placeholder="ここに読み取った文字が入るよ..."></textarea>
+  <button class="btn btn-copy" onclick="copyResultText()">③ テキストをコピーする</button>
 
   <div id="preview-container">
-    <p style="font-size: 0.9rem; color: #666;">↓ AIは今、この画像を読んでいます ↓</p>
+    <p style="font-size: 0.9rem; color: #666;">↓ AIが読んでいる画像（2倍に拡大済） ↓</p>
     <img id="preview-img" alt="プレビュー画像がここに出ます" />
   </div>
 
@@ -97,20 +100,21 @@
       const srcW = Math.abs(rectWidth) * scaleX;
       const srcH = Math.abs(rectHeight) * scaleY;
 
-      cropCanvas.width = srcW;
-      cropCanvas.height = srcH;
+      // 【精度向上の魔法】AIが見やすいように画像を2倍に拡大します
+      const MAGNIFY = 2; 
+      cropCanvas.width = srcW * MAGNIFY;
+      cropCanvas.height = srcH * MAGNIFY;
       const cropCtx = cropCanvas.getContext('2d');
-      cropCtx.drawImage(video, srcX, srcY, srcW, srcH, 0, 0, srcW, srcH);
+      // srcW, srcH の画像を、2倍の大きさのキャンバスに描画します
+      cropCtx.drawImage(video, srcX, srcY, srcW, srcH, 0, 0, srcW * MAGNIFY, srcH * MAGNIFY);
 
-      // AIに渡す画像をプレビューに表示する
       const imageData = cropCanvas.toDataURL('image/png');
       previewImg.src = imageData;
 
       try {
-        // AI職人の進捗を画面に表示する設定を追加
-        const result = await Tesseract.recognize(imageData, 'jpn', {
+        // 【精度向上の魔法】日本語だけでなく英語・数字も読めるように 'jpn+eng' に変更します
+        const result = await Tesseract.recognize(imageData, 'jpn+eng', {
           logger: m => {
-            console.log(m);
             if (m.status === 'recognizing text') {
               statusText.innerText = `文字を解読中... ${Math.round(m.progress * 100)}%`;
             } else {
@@ -125,13 +129,26 @@
         if (text === "") {
             statusText.innerText = "読み取り完了！でも文字が見つかりませんでした。";
         } else {
-            await navigator.clipboard.writeText(text);
-            statusText.innerText = "読み取り成功！コピーしました✨";
+            statusText.innerText = "読み取り成功！下のボタンを押してコピーしてね✨";
         }
       } catch (err) {
-        // 本当のエラー原因を画面に表示する
         statusText.innerText = "エラー詳細: " + (err.message || "原因不明のエラー");
         console.error(err);
+      }
+    }
+
+    // 【iPad対策】コピー専用のボタンと機能を追加
+    async function copyResultText() {
+      const text = resultBox.value;
+      if (!text) {
+        statusText.innerText = "コピーする文字がありません！";
+        return;
+      }
+      try {
+        await navigator.clipboard.writeText(text);
+        statusText.innerText = "✅ コピーしました！別のアプリに貼り付けてね。";
+      } catch (err) {
+        statusText.innerText = "コピーに失敗しました。手動で選択してコピーしてね。";
       }
     }
   </script>
