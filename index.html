@@ -3,45 +3,46 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>魔法の読み取りスキャナー（Gemini 3 Flash版）</title>
+  <title>魔法の全自動スキャナー</title>
   <style>
     body { font-family: 'Zen Maru Gothic', sans-serif; background-color: #fdfbf7; color: #333; text-align: center; margin: 0; padding: 10px; }
     h1 { color: #673ab7; font-size: 1.5rem; margin-bottom: 5px; } 
+    
+    .api-settings { background: #f3e5f5; padding: 10px; border-radius: 8px; max-width: 600px; margin: 0 auto 10px; text-align: center; }
+    .api-settings input { width: 90%; padding: 8px; border-radius: 4px; border: 1px solid #ccc; font-size: 1rem; text-align: center;}
+    
+    /* 【改善】結果エリアを上に持ってきたので、目立たせます */
+    #result-area { max-width: 600px; margin: 0 auto 10px; padding: 10px; background: #fff; border: 2px solid #ddd; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.05); }
+    #result-box { width: 95%; height: 80px; margin-bottom: 5px; padding: 8px; border: 1px solid #ccc; border-radius: 4px; font-size: 1.1rem; }
+    
+    .btn-copy { padding: 10px 20px; background: #ff9800; color: #fff; border: none; border-radius: 8px; font-size: 1rem; font-weight: bold; cursor: pointer; width: 100%; max-width: 300px; }
+    #status { color: #d32f2f; font-weight: bold; margin: 5px 0; min-height: 24px;}
+    
+    /* カメラエリアは下へ */
     #camera-container { position: relative; width: 100%; max-width: 600px; margin: 0 auto; border: 2px solid #ce93d8; border-radius: 10px; overflow: hidden; background: #000; }
     video, canvas { display: block; width: 100%; touch-action: none; }
     #overlay-canvas { position: absolute; top: 0; left: 0; z-index: 10; }
-    .btn { padding: 12px 20px; margin: 5px; background: #673ab7; color: #fff; border: none; border-radius: 8px; font-size: 1rem; font-weight: bold; cursor: pointer; }
-    .btn-copy { background: #ff9800; }
-    #result-box { width: 90%; max-width: 600px; height: 100px; margin: 10px auto; padding: 10px; border: 1px solid #ddd; border-radius: 8px; font-size: 1.1rem; }
-    #status { color: #d32f2f; font-weight: bold; margin: 10px 0; min-height: 24px;}
-    
-    .api-settings { background: #f3e5f5; padding: 15px; border-radius: 8px; max-width: 600px; margin: 10px auto; text-align: center; }
-    .api-settings input { width: 90%; padding: 10px; border-radius: 4px; border: 1px solid #ccc; font-size: 1rem; text-align: center;}
   </style>
 </head>
 <body>
 
-  <h1>✨ 魔法の読み取りスキャナー</h1>
+  <h1>✨ 魔法の全自動スキャナー</h1>
   
   <div class="api-settings">
-    <label style="font-size: 0.9rem; font-weight: bold; display:block; margin-bottom:8px;">🔑 Gemini APIキー (画面を閉じると消去されます)</label>
-    <input type="password" id="api-key" placeholder="使う時だけここに入力してね (AI-zaSy...)">
+    <label style="font-size: 0.8rem; font-weight: bold; display:block; margin-bottom:5px;">🔑 Gemini APIキー (使う時だけ入力)</label>
+    <input type="password" id="api-key" placeholder="AI-zaSy...">
   </div>
 
-  <div>
-    <button class="btn" onclick="startCamera()">① カメラ起動</button>
-    <button class="btn" onclick="processWithGemini()">② 囲んで読み取る</button>
+  <div id="result-area">
+    <p id="status">カメラを準備しています...</p>
+    <textarea id="result-box" placeholder="なぞるとここに文字が出ます..."></textarea><br>
+    <button class="btn-copy" onclick="copyResultText()">手動でコピーする</button>
   </div>
-  
-  <p id="status">ここに状況が出ます</p>
 
   <div id="camera-container">
     <video id="video" autoplay playsinline></video>
     <canvas id="overlay-canvas"></canvas>
   </div>
-
-  <textarea id="result-box" placeholder="ここに読み取った文字が綺麗に入ります..."></textarea>
-  <button class="btn btn-copy" onclick="copyResultText()">③ コピーする</button>
 
   <script>
     const video = document.getElementById('video');
@@ -54,6 +55,11 @@
     let startX = 0, startY = 0, rectWidth = 0, rectHeight = 0;
     let isDrawing = false;
 
+    // 【改善①】画面が開かれた瞬間に、自動でカメラを起動する
+    window.onload = () => {
+      startCamera();
+    };
+
     async function startCamera() {
       try {
         const stream = await navigator.mediaDevices.getUserMedia({ 
@@ -61,7 +67,7 @@
         });
         video.srcObject = stream;
         video.onloadedmetadata = () => { canvas.width = video.clientWidth; canvas.height = video.clientHeight; };
-        statusText.innerText = "カメラ準備OK！なぞってね。";
+        statusText.innerText = "準備OK！APIキーを入れて、なぞってね。";
       } catch (err) { statusText.innerText = "カメラエラー: " + err.message; }
     }
 
@@ -76,15 +82,20 @@
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       ctx.strokeStyle = '#ff5252'; ctx.lineWidth = 3; ctx.strokeRect(startX, startY, rectWidth, rectHeight);
     });
-    canvas.addEventListener('touchend', () => { isDrawing = false; });
+    
+    // 【改善②】指を離した瞬間に、自動で読み取り（AI通信）を開始する
+    canvas.addEventListener('touchend', () => { 
+      isDrawing = false; 
+      processWithGemini(); // 自動発動！
+    });
 
     async function processWithGemini() {
       const apiKey = apiKeyInput.value.trim();
       
-      if (!apiKey) return statusText.innerText = "エラー: 上の欄にAPIキーを入力してね！";
-      if (Math.abs(rectWidth) < 20 || Math.abs(rectHeight) < 20) return statusText.innerText = "エラー: もう少し大きく四角を囲んでね！";
+      if (!apiKey) return statusText.innerText = "エラー: 先に上の欄にAPIキーを入力してね！";
+      if (Math.abs(rectWidth) < 20 || Math.abs(rectHeight) < 20) return statusText.innerText = "もう少し大きく四角を囲んでね！";
 
-      statusText.innerText = "画像を切り取り中...";
+      statusText.innerText = "Geminiが解読中...🤖✨ (数秒待ってね)";
       resultBox.value = "";
 
       const cropCanvas = document.createElement('canvas');
@@ -102,12 +113,8 @@
 
       const base64Image = cropCanvas.toDataURL('image/jpeg', 0.8).split(',')[1];
 
-      statusText.innerText = "Gemini 3 Flashが解読中...🤖✨ (数秒待ってね)";
-
       try {
-        // 【修正箇所】URLの宛先を正しい `gemini-3-flash-preview` に直しました！
         const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${apiKey}`;
-        
         const response = await fetch(url, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -121,7 +128,6 @@
           })
         });
 
-        // エラーの理由をもう少し詳しく表示するための処理
         if (!response.ok) {
            const errorData = await response.json();
            const errorDetails = errorData.error ? errorData.error.message : response.statusText;
@@ -132,7 +138,15 @@
         const cleanText = data.candidates[0].content.parts[0].text.trim();
         
         resultBox.value = cleanText;
-        statusText.innerText = "大成功！Gemini 3 Flashが完璧に読み取りました✨";
+
+        // 【改善③】読み取り完了後、自動でクリップボードへのコピーに挑戦する
+        try {
+          await navigator.clipboard.writeText(cleanText);
+          statusText.innerText = "大成功！自動コピー完了✨ すぐに貼り付けできます。";
+        } catch (copyErr) {
+          // Safariのセキュリティで弾かれた場合は、優しいメッセージに変更
+          statusText.innerText = "読み取り成功！すぐ下のオレンジのボタンを押してコピーしてね。";
+        }
 
       } catch (err) {
         statusText.innerText = "通信エラー: " + err.message;
@@ -146,7 +160,7 @@
       try {
         await navigator.clipboard.writeText(text);
         statusText.innerText = "✅ コピー大成功！別のアプリに貼り付けてね。";
-      } catch (err) { statusText.innerText = "コピー失敗。手動でコピーしてね。"; }
+      } catch (err) { statusText.innerText = "コピー失敗。手動で選択してコピーしてね。"; }
     }
   </script>
 </body>
