@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>魔法の読み取りスキャナー（Geminiセキュア版）</title>
+  <title>魔法の読み取りスキャナー（Gemini 3 Flash版）</title>
   <style>
     body { font-family: 'Zen Maru Gothic', sans-serif; background-color: #fdfbf7; color: #333; text-align: center; margin: 0; padding: 10px; }
     h1 { color: #673ab7; font-size: 1.5rem; margin-bottom: 5px; } 
@@ -15,7 +15,6 @@
     #result-box { width: 90%; max-width: 600px; height: 100px; margin: 10px auto; padding: 10px; border: 1px solid #ddd; border-radius: 8px; font-size: 1.1rem; }
     #status { color: #d32f2f; font-weight: bold; margin: 10px 0; min-height: 24px;}
     
-    /* APIキー入力欄（記憶しない安全設計） */
     .api-settings { background: #f3e5f5; padding: 15px; border-radius: 8px; max-width: 600px; margin: 10px auto; text-align: center; }
     .api-settings input { width: 90%; padding: 10px; border-radius: 4px; border: 1px solid #ccc; font-size: 1rem; text-align: center;}
   </style>
@@ -55,7 +54,6 @@
     let startX = 0, startY = 0, rectWidth = 0, rectHeight = 0;
     let isDrawing = false;
 
-    // カメラ起動
     async function startCamera() {
       try {
         const stream = await navigator.mediaDevices.getUserMedia({ 
@@ -67,7 +65,6 @@
       } catch (err) { statusText.innerText = "カメラエラー: " + err.message; }
     }
 
-    // 指でなぞる処理
     function getTouchPos(e) {
       const rect = canvas.getBoundingClientRect(); const touch = e.touches[0];
       return { x: touch.clientX - rect.left, y: touch.clientY - rect.top };
@@ -81,9 +78,10 @@
     });
     canvas.addEventListener('touchend', () => { isDrawing = false; });
 
-    // Geminiに画像を渡して文字起こしする処理
     async function processWithGemini() {
+      // 余計な空白が入っていても自動で削除する（.trim()）
       const apiKey = apiKeyInput.value.trim();
+      
       if (!apiKey) return statusText.innerText = "エラー: 上の欄にAPIキーを入力してね！";
       if (Math.abs(rectWidth) < 20 || Math.abs(rectHeight) < 20) return statusText.innerText = "エラー: もう少し大きく四角を囲んでね！";
 
@@ -105,10 +103,13 @@
 
       const base64Image = cropCanvas.toDataURL('image/jpeg', 0.8).split(',')[1];
 
-      statusText.innerText = "Geminiが画像を解読中...🤖✨ (数秒待ってね)";
+      statusText.innerText = "Gemini 3 Flashが解読中...🤖✨ (爆速です!)";
 
       try {
-        const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`, {
+        // 【ここが重要！】URLの宛先を gemini-3-flash に変更しました
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash:generateContent?key=${apiKey}`;
+        
+        const response = await fetch(url, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -121,13 +122,15 @@
           })
         });
 
-        if (!response.ok) throw new Error("APIキーが間違っているか、通信エラーです。");
+        if (!response.ok) {
+           throw new Error(`APIキー間違い、または未有効化です (${response.status})`);
+        }
 
         const data = await response.json();
         const cleanText = data.candidates[0].content.parts[0].text.trim();
         
         resultBox.value = cleanText;
-        statusText.innerText = "大成功！Geminiが完璧に読み取りました✨ コピーしてね。";
+        statusText.innerText = "大成功！Gemini 3 Flashが完璧に読み取りました✨";
 
       } catch (err) {
         statusText.innerText = "通信エラー: " + err.message;
