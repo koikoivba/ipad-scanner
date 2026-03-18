@@ -79,7 +79,6 @@
     canvas.addEventListener('touchend', () => { isDrawing = false; });
 
     async function processWithGemini() {
-      // 余計な空白が入っていても自動で削除する（.trim()）
       const apiKey = apiKeyInput.value.trim();
       
       if (!apiKey) return statusText.innerText = "エラー: 上の欄にAPIキーを入力してね！";
@@ -103,11 +102,11 @@
 
       const base64Image = cropCanvas.toDataURL('image/jpeg', 0.8).split(',')[1];
 
-      statusText.innerText = "Gemini 3 Flashが解読中...🤖✨ (爆速です!)";
+      statusText.innerText = "Gemini 3 Flashが解読中...🤖✨ (数秒待ってね)";
 
       try {
-        // 【ここが重要！】URLの宛先を gemini-3-flash に変更しました
-        const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash:generateContent?key=${apiKey}`;
+        // 【修正箇所】URLの宛先を正しい `gemini-3-flash-preview` に直しました！
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${apiKey}`;
         
         const response = await fetch(url, {
           method: 'POST',
@@ -122,8 +121,11 @@
           })
         });
 
+        // エラーの理由をもう少し詳しく表示するための処理
         if (!response.ok) {
-           throw new Error(`APIキー間違い、または未有効化です (${response.status})`);
+           const errorData = await response.json();
+           const errorDetails = errorData.error ? errorData.error.message : response.statusText;
+           throw new Error(`エラー番号 ${response.status} : ${errorDetails}`);
         }
 
         const data = await response.json();
