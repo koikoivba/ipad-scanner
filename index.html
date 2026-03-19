@@ -11,14 +11,12 @@
     .api-settings { background: #f3e5f5; padding: 10px; border-radius: 8px; max-width: 600px; margin: 0 auto 10px; text-align: center; }
     .api-settings input { width: 90%; padding: 8px; border-radius: 4px; border: 1px solid #ccc; font-size: 1rem; text-align: center;}
     
-    /* 【改善】結果エリアを上に持ってきたので、目立たせます */
     #result-area { max-width: 600px; margin: 0 auto 10px; padding: 10px; background: #fff; border: 2px solid #ddd; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.05); }
     #result-box { width: 95%; height: 80px; margin-bottom: 5px; padding: 8px; border: 1px solid #ccc; border-radius: 4px; font-size: 1.1rem; }
     
     .btn-copy { padding: 10px 20px; background: #ff9800; color: #fff; border: none; border-radius: 8px; font-size: 1rem; font-weight: bold; cursor: pointer; width: 100%; max-width: 300px; }
     #status { color: #d32f2f; font-weight: bold; margin: 5px 0; min-height: 24px;}
     
-    /* カメラエリアは下へ */
     #camera-container { position: relative; width: 100%; max-width: 600px; margin: 0 auto; border: 2px solid #ce93d8; border-radius: 10px; overflow: hidden; background: #000; }
     video, canvas { display: block; width: 100%; touch-action: none; }
     #overlay-canvas { position: absolute; top: 0; left: 0; z-index: 10; }
@@ -55,7 +53,6 @@
     let startX = 0, startY = 0, rectWidth = 0, rectHeight = 0;
     let isDrawing = false;
 
-    // 【改善①】画面が開かれた瞬間に、自動でカメラを起動する
     window.onload = () => {
       startCamera();
     };
@@ -83,10 +80,9 @@
       ctx.strokeStyle = '#ff5252'; ctx.lineWidth = 3; ctx.strokeRect(startX, startY, rectWidth, rectHeight);
     });
     
-    // 【改善②】指を離した瞬間に、自動で読み取り（AI通信）を開始する
     canvas.addEventListener('touchend', () => { 
       isDrawing = false; 
-      processWithGemini(); // 自動発動！
+      processWithGemini(); 
     });
 
     async function processWithGemini() {
@@ -115,13 +111,17 @@
 
       try {
         const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${apiKey}`;
+        
+        // 【ここが重要！】AIへの命令文（プロンプト）を極限まで厳格に修正しました
+        const finalPrompt = "画像内のテキストを正確に文字起こししてください。箇条書きなどはそのまま反映し、**文字起こししたテキストそのもののみ**を出力してください。「画像内のテキストを文字起こししました」や「ー以下余白ー」といった、導入文や説明、末尾の定型句は絶対に含めないでください。誤字脱字がある場合は、文脈から正しい日本語に補正してください。";
+
         const response = await fetch(url, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             contents: [{
               parts: [
-                { text: "この画像内に書かれているテキストを正確に文字起こししてください。箇条書きなどはそのまま反映し、テキストのみを出力してください。誤字脱字がある場合は、文脈から正しい日本語に補正してください。" },
+                { text: finalPrompt },
                 { inlineData: { mimeType: "image/jpeg", data: base64Image } }
               ]
             }]
@@ -139,13 +139,13 @@
         
         resultBox.value = cleanText;
 
-        // 【改善③】読み取り完了後、自動でクリップボードへのコピーに挑戦する
+        // 読み取り完了後、自動コピーに挑戦
         try {
           await navigator.clipboard.writeText(cleanText);
-          statusText.innerText = "大成功！自動コピー完了✨ すぐに貼り付けできます。";
+          statusText.innerText = "大成功！自動コピー完了✨ そのまま貼り付けできます。";
         } catch (copyErr) {
-          // Safariのセキュリティで弾かれた場合は、優しいメッセージに変更
-          statusText.innerText = "読み取り成功！すぐ下のオレンジのボタンを押してコピーしてね。";
+          // Safariのセキュリティで弾かれた場合は、手動コピーを促す（レイアウト逆転により、ボタンは目の前にあります！）
+          statusText.innerText = "読み取り成功！目の前のオレンジのボタンを押してコピーしてね。";
         }
 
       } catch (err) {
